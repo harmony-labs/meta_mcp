@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_server_creation() {
-        let server = McpServer::new();
+        let _server = McpServer::new();
         // Server should be created (meta_dir may or may not be set depending on cwd)
         assert!(true);
     }
