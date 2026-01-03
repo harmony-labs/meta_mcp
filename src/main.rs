@@ -492,6 +492,34 @@ impl McpServer {
                     "required": ["branch"]
                 }),
             },
+            Tool {
+                name: "meta_git_multi_commit".to_string(),
+                description: "Create commits with different messages for each repository. Allows tailored commit messages per project.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "commits": {
+                            "type": "array",
+                            "description": "Array of commit objects, each specifying a project and message",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "project": {
+                                        "type": "string",
+                                        "description": "Project name (use '.' for root repo)"
+                                    },
+                                    "message": {
+                                        "type": "string",
+                                        "description": "Commit message for this project"
+                                    }
+                                },
+                                "required": ["project", "message"]
+                            }
+                        }
+                    },
+                    "required": ["commits"]
+                }),
+            },
             // ================================================================
             // Build/Test Orchestration Tools (Phase 5.2)
             // ================================================================
@@ -760,6 +788,7 @@ impl McpServer {
             "meta_git_add" => self.tool_git_add(&arguments),
             "meta_git_commit" => self.tool_git_commit(&arguments),
             "meta_git_checkout" => self.tool_git_checkout(&arguments),
+            "meta_git_multi_commit" => self.tool_git_multi_commit(&arguments),
             // Build/test tools
             "meta_detect_build_systems" => self.tool_detect_build_systems(&arguments),
             "meta_run_tests" => self.tool_run_tests(&arguments),
@@ -1264,6 +1293,113 @@ impl McpServer {
                 stderr
             ))
         }
+    }
+
+    fn tool_git_multi_commit(&self, args: &serde_json::Value) -> Result<String> {
+        let meta_dir = self
+            .meta_dir
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No meta repository found"))?;
+
+        let commits = args
+            .get("commits")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'commits' argument"))?;
+
+        #[derive(Debug, Serialize)]
+        struct CommitResult {
+            project: String,
+            success: bool,
+            message: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            error: Option<String>,
+        }
+
+        let mut results: Vec<CommitResult> = Vec::new();
+
+        for commit_obj in commits {
+            let project = commit_obj
+                .get("project")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'project' in commit entry"))?;
+
+            let message = commit_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'message' in commit entry"))?;
+
+            // Determine the path for this project
+            let project_path = if project == "." {
+                meta_dir.clone()
+            } else {
+                meta_dir.join(project)
+            };
+
+            if !project_path.exists() {
+                results.push(CommitResult {
+                    project: project.to_string(),
+                    success: false,
+                    message: message.to_string(),
+                    error: Some(format!(
+                        "Project path does not exist: {}",
+                        project_path.display()
+                    )),
+                });
+                continue;
+            }
+
+            // Execute git commit for this project
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&project_path)
+                .arg("commit")
+                .arg("-m")
+                .arg(message)
+                .output();
+
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        results.push(CommitResult {
+                            project: project.to_string(),
+                            success: true,
+                            message: message.to_string(),
+                            error: None,
+                        });
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        results.push(CommitResult {
+                            project: project.to_string(),
+                            success: false,
+                            message: message.to_string(),
+                            error: Some(stderr.trim().to_string()),
+                        });
+                    }
+                }
+                Err(e) => {
+                    results.push(CommitResult {
+                        project: project.to_string(),
+                        success: false,
+                        message: message.to_string(),
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+
+        let succeeded = results.iter().filter(|r| r.success).count();
+        let failed = results.iter().filter(|r| !r.success).count();
+
+        let output = serde_json::json!({
+            "results": results,
+            "summary": {
+                "total": results.len(),
+                "succeeded": succeeded,
+                "failed": failed
+            }
+        });
+
+        Ok(serde_json::to_string_pretty(&output)?)
     }
 
     fn tool_git_checkout(&self, args: &serde_json::Value) -> Result<String> {
@@ -2623,6 +2759,7 @@ mod tests {
         assert!(tool_names.contains(&"meta_git_add"));
         assert!(tool_names.contains(&"meta_git_commit"));
         assert!(tool_names.contains(&"meta_git_checkout"));
+        assert!(tool_names.contains(&"meta_git_multi_commit"));
 
         // Build/test tools
         assert!(tool_names.contains(&"meta_detect_build_systems"));
@@ -2645,8 +2782,8 @@ mod tests {
         assert!(tool_names.contains(&"meta_snapshot_restore"));
         assert!(tool_names.contains(&"meta_batch_execute"));
 
-        // Verify total count (4 core + 9 git + 4 build + 3 discovery + 8 AI = 28)
-        assert_eq!(tool_names.len(), 28);
+        // Verify total count (4 core + 10 git + 4 build + 3 discovery + 8 AI = 29)
+        assert_eq!(tool_names.len(), 29);
     }
 
     #[test]
@@ -2678,5 +2815,95 @@ mod tests {
         let error = response.error.unwrap();
         assert_eq!(error.code, -32600);
         assert_eq!(error.message, "Invalid Request");
+    }
+
+    #[test]
+    fn test_multi_commit_tool_schema() {
+        let server = McpServer::new();
+        let result = server.handle_list_tools().unwrap();
+
+        let result_obj = result.as_object().unwrap();
+        let tools = result_obj.get("tools").unwrap().as_array().unwrap();
+
+        // Find meta_git_multi_commit tool
+        let multi_commit_tool = tools
+            .iter()
+            .find(|t| t.get("name").and_then(|n| n.as_str()) == Some("meta_git_multi_commit"))
+            .expect("meta_git_multi_commit tool should exist");
+
+        // Verify schema structure
+        let schema = multi_commit_tool.get("inputSchema").unwrap();
+        let props = schema.get("properties").unwrap().as_object().unwrap();
+
+        // Should have a commits property
+        assert!(props.contains_key("commits"));
+
+        let commits_prop = props.get("commits").unwrap();
+        assert_eq!(commits_prop.get("type").unwrap(), "array");
+
+        // Verify items schema
+        let items = commits_prop.get("items").unwrap();
+        let item_props = items.get("properties").unwrap().as_object().unwrap();
+        assert!(item_props.contains_key("project"));
+        assert!(item_props.contains_key("message"));
+
+        // Verify required fields in items
+        let item_required = items.get("required").unwrap().as_array().unwrap();
+        let required_fields: Vec<&str> = item_required
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(required_fields.contains(&"project"));
+        assert!(required_fields.contains(&"message"));
+    }
+
+    #[test]
+    fn test_multi_commit_missing_commits_arg() {
+        let server = McpServer::new();
+
+        // Test with empty args - should fail with missing commits
+        let result = server.tool_git_multi_commit(&serde_json::json!({}));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("commits"));
+    }
+
+    #[test]
+    fn test_multi_commit_invalid_commits_format() {
+        let server = McpServer::new();
+
+        // Test with commits as string instead of array
+        let result = server.tool_git_multi_commit(&serde_json::json!({
+            "commits": "not an array"
+        }));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("commits"));
+    }
+
+    #[test]
+    fn test_multi_commit_missing_project_in_entry() {
+        let server = McpServer::new();
+
+        // Test with commit entry missing project
+        let result = server.tool_git_multi_commit(&serde_json::json!({
+            "commits": [
+                {"message": "Test commit"}
+            ]
+        }));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("project"));
+    }
+
+    #[test]
+    fn test_multi_commit_missing_message_in_entry() {
+        let server = McpServer::new();
+
+        // Test with commit entry missing message
+        let result = server.tool_git_multi_commit(&serde_json::json!({
+            "commits": [
+                {"project": "test-repo"}
+            ]
+        }));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("message"));
     }
 }
