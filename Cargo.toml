@@ -1,7 +1,9 @@
 [package]
 name = "meta-mcp"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "MCP server for meta - exposes multi-repo operations to AI tools"
 
 [[bin]]
