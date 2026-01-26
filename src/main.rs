@@ -4,8 +4,10 @@
 //! like Claude to interact with meta repositories.
 
 use anyhow::{Context, Result};
+use meta_cli::config::{self, ProjectInfo};
+use meta_cli::dependency_graph::{self, ProjectDependencies};
+use meta_cli::query::{Query, RepoState, WorkspaceState};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -105,51 +107,6 @@ struct ToolContent {
 // Meta-specific Types
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
-struct MetaConfig {
-    #[serde(default)]
-    projects: HashMap<String, ProjectEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum ProjectEntry {
-    Simple(String),
-    Extended {
-        repo: String,
-        #[serde(default)]
-        path: Option<String>,
-        #[serde(default)]
-        tags: Vec<String>,
-    },
-}
-
-#[derive(Debug, Serialize)]
-struct ProjectInfo {
-    name: String,
-    path: String,
-    repo: String,
-    tags: Vec<String>,
-}
-
-/// Extended project info with dependency tracking
-#[derive(Debug, Clone, Serialize)]
-struct ExtendedProjectInfo {
-    name: String,
-    path: String,
-    repo: String,
-    tags: Vec<String>,
-    provides: Vec<String>,
-    depends_on: Vec<String>,
-}
-
-/// Dependency graph for impact analysis
-struct DependencyGraph {
-    nodes: HashMap<String, ExtendedProjectInfo>,
-    edges: HashMap<String, Vec<String>>,
-    reverse_edges: HashMap<String, Vec<String>>,
-}
-
 // ============================================================================
 // MCP Server
 // ============================================================================
@@ -163,23 +120,10 @@ impl McpServer {
         // Find .meta config in current directory or parents
         let meta_dir = std::env::current_dir()
             .ok()
-            .and_then(|dir| Self::find_meta_dir(&dir));
+            .and_then(|dir| config::find_meta_config(&dir, None))
+            .map(|(config_path, _)| config_path.parent().unwrap().to_path_buf());
 
         Self { meta_dir }
-    }
-
-    fn find_meta_dir(start: &std::path::Path) -> Option<PathBuf> {
-        let mut current = start.to_path_buf();
-        loop {
-            for name in &[".meta", ".meta.yaml", ".meta.yml"] {
-                if current.join(name).exists() {
-                    return Some(current);
-                }
-            }
-            if !current.pop() {
-                return None;
-            }
-        }
     }
 
     fn run(&mut self) -> Result<()> {
@@ -1894,9 +1838,7 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument"))?;
 
-        // Parse the query
-        let query = self.parse_query(query_str)?;
-
+        let query = Query::parse(query_str)?;
         let projects = self.load_projects(meta_dir)?;
         let mut matching = Vec::new();
 
@@ -1906,11 +1848,8 @@ impl McpServer {
                 continue;
             }
 
-            // Collect repo state
-            let state = self.collect_repo_state(project, &project_path)?;
-
-            // Check if it matches the query
-            if self.matches_query(&state, &query) {
+            let state = RepoState::collect(&project.name, &project_path, &project.tags)?;
+            if state.matches(&query) {
                 matching.push(state);
             }
         }
@@ -1929,62 +1868,20 @@ impl McpServer {
             .ok_or_else(|| anyhow::anyhow!("No meta repository found"))?;
 
         let projects = self.load_projects(meta_dir)?;
-
-        let mut total = 0;
-        let mut dirty = 0;
-        let mut ahead_of_remote = 0;
-        let mut behind_remote = 0;
-        let mut branches: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
-        let mut tags: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut repo_states = Vec::new();
 
         for project in &projects {
             let project_path = meta_dir.join(&project.path);
             if !project_path.exists() {
                 continue;
             }
-
-            total += 1;
-
-            // Check if dirty
-            if let Ok(status) = self.git_output(&project_path, &["status", "--porcelain"]) {
-                if !status.is_empty() {
-                    dirty += 1;
-                }
-            }
-
-            // Get branch
-            if let Ok(branch) =
-                self.git_output(&project_path, &["rev-parse", "--abbrev-ref", "HEAD"])
-            {
-                *branches.entry(branch).or_insert(0) += 1;
-            }
-
-            // Check ahead/behind
-            if let Ok((ahead, behind)) = self.get_ahead_behind(&project_path) {
-                if ahead > 0 {
-                    ahead_of_remote += 1;
-                }
-                if behind > 0 {
-                    behind_remote += 1;
-                }
-            }
-
-            // Count tags
-            for tag in &project.tags {
-                *tags.entry(tag.clone()).or_insert(0) += 1;
+            if let Ok(state) = RepoState::collect(&project.name, &project_path, &project.tags) {
+                repo_states.push(state);
             }
         }
 
-        Ok(serde_json::to_string_pretty(&serde_json::json!({
-            "total_projects": total,
-            "dirty_projects": dirty,
-            "clean_projects": total - dirty,
-            "ahead_of_remote": ahead_of_remote,
-            "behind_remote": behind_remote,
-            "projects_by_branch": branches,
-            "projects_by_tag": tags
-        }))?)
+        let workspace_state = WorkspaceState::from_repos(&repo_states);
+        Ok(serde_json::to_string_pretty(&workspace_state)?)
     }
 
     fn tool_analyze_impact(&self, args: &serde_json::Value) -> Result<String> {
@@ -1998,13 +1895,9 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'project' argument"))?;
 
-        let projects = self.load_projects_extended(meta_dir)?;
-
-        // Build dependency graph
-        let graph = self.build_dependency_graph(&projects)?;
-
-        // Analyze impact
-        let impact = self.analyze_project_impact(project_name, &graph)?;
+        let projects = self.load_project_dependencies(meta_dir)?;
+        let graph = dependency_graph::DependencyGraph::build(projects)?;
+        let impact = graph.analyze_impact(project_name);
 
         Ok(serde_json::to_string_pretty(&impact)?)
     }
@@ -2017,13 +1910,12 @@ impl McpServer {
 
         let tag_filter = args.get("tag").and_then(|v| v.as_str());
 
-        let projects = self.load_projects_extended(meta_dir)?;
-
-        // Build dependency graph
-        let graph = self.build_dependency_graph(&projects)?;
-
-        // Get topological order
-        let order = self.topological_sort(&graph, tag_filter)?;
+        let projects = self.load_project_dependencies(meta_dir)?;
+        let graph = dependency_graph::DependencyGraph::build(projects)?;
+        let tags: Vec<String> = tag_filter
+            .map(|t| vec![t.to_string()])
+            .unwrap_or_default();
+        let order = graph.execution_order_filtered(&tags)?;
 
         Ok(serde_json::to_string_pretty(&serde_json::json!({
             "execution_order": order,
@@ -2344,130 +2236,6 @@ impl McpServer {
         }))?)
     }
 
-    // ========================================================================
-    // Query/Analysis Helpers
-    // ========================================================================
-
-    fn parse_query(&self, query_str: &str) -> Result<Vec<(String, String)>> {
-        let mut conditions = Vec::new();
-
-        // Split by AND (case-insensitive)
-        for part in query_str.split(" AND ").chain(query_str.split(" and ")) {
-            let part = part.trim();
-            if part.is_empty() {
-                continue;
-            }
-
-            let parts: Vec<&str> = part.splitn(2, ':').collect();
-            if parts.len() != 2 {
-                continue;
-            }
-
-            conditions.push((parts[0].trim().to_lowercase(), parts[1].trim().to_string()));
-        }
-
-        // Dedupe if there were no ANDs
-        conditions.dedup();
-        Ok(conditions)
-    }
-
-    fn collect_repo_state(
-        &self,
-        project: &ProjectInfo,
-        project_path: &std::path::Path,
-    ) -> Result<serde_json::Value> {
-        let branch = self
-            .git_output(project_path, &["rev-parse", "--abbrev-ref", "HEAD"])
-            .unwrap_or_else(|_| "unknown".to_string());
-
-        let status = self
-            .git_output(project_path, &["status", "--porcelain"])
-            .unwrap_or_default();
-        let is_dirty = !status.is_empty();
-
-        let (ahead, behind) = self.get_ahead_behind(project_path).unwrap_or((0, 0));
-
-        let last_commit = self
-            .git_output(project_path, &["log", "-1", "--format=%H %s"])
-            .unwrap_or_default();
-
-        Ok(serde_json::json!({
-            "name": project.name,
-            "path": project.path,
-            "branch": branch,
-            "tags": project.tags,
-            "is_dirty": is_dirty,
-            "ahead": ahead,
-            "behind": behind,
-            "last_commit": last_commit
-        }))
-    }
-
-    fn matches_query(&self, state: &serde_json::Value, conditions: &[(String, String)]) -> bool {
-        for (field, value) in conditions {
-            let matches = match field.as_str() {
-                "dirty" => {
-                    let expected = value.parse::<bool>().unwrap_or(false);
-                    state
-                        .get("is_dirty")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                        == expected
-                }
-                "branch" => state.get("branch").and_then(|v| v.as_str()).unwrap_or("") == value,
-                "tag" => state
-                    .get("tags")
-                    .and_then(|v| v.as_array())
-                    .map(|tags| tags.iter().any(|t| t.as_str() == Some(value.as_str())))
-                    .unwrap_or(false),
-                "ahead" => {
-                    let expected = value.parse::<bool>().unwrap_or(false);
-                    let ahead = state.get("ahead").and_then(|v| v.as_i64()).unwrap_or(0);
-                    (ahead > 0) == expected
-                }
-                "behind" => {
-                    let expected = value.parse::<bool>().unwrap_or(false);
-                    let behind = state.get("behind").and_then(|v| v.as_i64()).unwrap_or(0);
-                    (behind > 0) == expected
-                }
-                _ => true, // Unknown field, skip
-            };
-            if !matches {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn get_ahead_behind(&self, path: &std::path::Path) -> Result<(i32, i32)> {
-        let tracking = self.git_output(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
-        if tracking.is_err() {
-            return Ok((0, 0));
-        }
-        let tracking = tracking.unwrap();
-        if tracking.is_empty() {
-            return Ok((0, 0));
-        }
-
-        let output = self.git_output(
-            path,
-            &[
-                "rev-list",
-                "--left-right",
-                "--count",
-                &format!("HEAD...{tracking}"),
-            ],
-        )?;
-        let parts: Vec<&str> = output.split_whitespace().collect();
-        if parts.len() == 2 {
-            let ahead = parts[0].parse().unwrap_or(0);
-            let behind = parts[1].parse().unwrap_or(0);
-            Ok((ahead, behind))
-        } else {
-            Ok((0, 0))
-        }
-    }
-
     fn git_output(&self, path: &std::path::Path, args: &[&str]) -> Result<String> {
         let output = Command::new("git")
             .args(args)
@@ -2503,17 +2271,14 @@ impl McpServer {
     // Dependency Graph Helpers
     // ========================================================================
 
-    fn load_projects_extended(
+    fn load_project_dependencies(
         &self,
         meta_dir: &std::path::Path,
-    ) -> Result<Vec<ExtendedProjectInfo>> {
+    ) -> Result<Vec<ProjectDependencies>> {
         let projects = self.load_projects(meta_dir)?;
-
-        // For now, return projects without extended dependency info
-        // In a full implementation, we'd parse provides/depends_on from config
         Ok(projects
             .into_iter()
-            .map(|p| ExtendedProjectInfo {
+            .map(|p| ProjectDependencies {
                 name: p.name,
                 path: p.path,
                 repo: p.repo,
@@ -2524,179 +2289,15 @@ impl McpServer {
             .collect())
     }
 
-    fn build_dependency_graph(&self, projects: &[ExtendedProjectInfo]) -> Result<DependencyGraph> {
-        let mut graph = DependencyGraph {
-            nodes: std::collections::HashMap::new(),
-            edges: std::collections::HashMap::new(),
-            reverse_edges: std::collections::HashMap::new(),
-        };
-
-        for project in projects {
-            graph.nodes.insert(project.name.clone(), project.clone());
-            graph
-                .edges
-                .insert(project.name.clone(), project.depends_on.clone());
-
-            // Build reverse edges
-            for dep in &project.depends_on {
-                graph
-                    .reverse_edges
-                    .entry(dep.clone())
-                    .or_default()
-                    .push(project.name.clone());
-            }
-        }
-
-        Ok(graph)
-    }
-
-    fn analyze_project_impact(
-        &self,
-        project_name: &str,
-        graph: &DependencyGraph,
-    ) -> Result<serde_json::Value> {
-        let mut direct_dependents = Vec::new();
-        let mut transitive_dependents = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        let mut queue = std::collections::VecDeque::new();
-
-        // Get direct dependents
-        if let Some(deps) = graph.reverse_edges.get(project_name) {
-            for dep in deps {
-                direct_dependents.push(dep.clone());
-                queue.push_back((dep.clone(), 1));
-            }
-        }
-
-        // BFS for transitive
-        while let Some((current, depth)) = queue.pop_front() {
-            if visited.contains(&current) {
-                continue;
-            }
-            visited.insert(current.clone());
-
-            if depth > 1 {
-                transitive_dependents.push(current.clone());
-            }
-
-            if let Some(deps) = graph.reverse_edges.get(&current) {
-                for dep in deps {
-                    if !visited.contains(dep) {
-                        queue.push_back((dep.clone(), depth + 1));
-                    }
-                }
-            }
-        }
-
-        Ok(serde_json::json!({
-            "project": project_name,
-            "direct_dependents": direct_dependents,
-            "transitive_dependents": transitive_dependents,
-            "total_affected": visited.len()
-        }))
-    }
-
-    fn topological_sort(
-        &self,
-        graph: &DependencyGraph,
-        tag_filter: Option<&str>,
-    ) -> Result<Vec<String>> {
-        let mut in_degree: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
-        let mut result = Vec::new();
-        let mut queue = std::collections::VecDeque::new();
-
-        // Initialize in-degrees
-        for name in graph.nodes.keys() {
-            in_degree.insert(name.as_str(), 0);
-        }
-
-        // Calculate in-degrees from reverse edges
-        for deps in graph.edges.values() {
-            for dep in deps {
-                if let Some(degree) = in_degree.get_mut(dep.as_str()) {
-                    *degree += 1;
-                }
-            }
-        }
-
-        // Start with nodes that have no dependencies
-        for (name, &degree) in &in_degree {
-            if degree == 0 {
-                queue.push_back(*name);
-            }
-        }
-
-        // Process queue
-        while let Some(current) = queue.pop_front() {
-            // Apply tag filter
-            let include = if let Some(tag) = tag_filter {
-                graph
-                    .nodes
-                    .get(current)
-                    .map(|p| p.tags.contains(&tag.to_string()))
-                    .unwrap_or(false)
-            } else {
-                true
-            };
-
-            if include {
-                result.push(current.to_string());
-            }
-
-            if let Some(dependents) = graph.reverse_edges.get(current) {
-                for dependent in dependents {
-                    if let Some(degree) = in_degree.get_mut(dependent.as_str()) {
-                        *degree -= 1;
-                        if *degree == 0 {
-                            queue.push_back(dependent.as_str());
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
     // ========================================================================
     // Helper Functions
     // ========================================================================
 
     fn load_projects(&self, meta_dir: &std::path::Path) -> Result<Vec<ProjectInfo>> {
-        // Try to find and parse the meta config
-        for name in &[".meta", ".meta.yaml", ".meta.yml"] {
-            let path = meta_dir.join(name);
-            if path.exists() {
-                let content = std::fs::read_to_string(&path)?;
-                let config: MetaConfig = if name.ends_with(".yaml") || name.ends_with(".yml") {
-                    serde_yaml::from_str(&content)?
-                } else {
-                    serde_json::from_str(&content)?
-                };
-
-                return Ok(config
-                    .projects
-                    .into_iter()
-                    .map(|(name, entry)| match entry {
-                        ProjectEntry::Simple(repo) => ProjectInfo {
-                            path: name.clone(),
-                            name,
-                            repo,
-                            tags: vec![],
-                        },
-                        ProjectEntry::Extended { repo, path, tags } => ProjectInfo {
-                            path: path.unwrap_or_else(|| name.clone()),
-                            name,
-                            repo,
-                            tags,
-                        },
-                    })
-                    .collect());
-            }
-        }
-
-        Err(anyhow::anyhow!("No meta config found"))
+        let (config_path, _) = config::find_meta_config(meta_dir, None)
+            .ok_or_else(|| anyhow::anyhow!("No meta config found"))?;
+        let (projects, _ignore) = config::parse_meta_config(&config_path)?;
+        Ok(projects)
     }
 }
 
