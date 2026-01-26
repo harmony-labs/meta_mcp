@@ -2278,14 +2278,7 @@ impl McpServer {
         let projects = self.load_projects(meta_dir)?;
         Ok(projects
             .into_iter()
-            .map(|p| ProjectDependencies {
-                name: p.name,
-                path: p.path,
-                repo: p.repo,
-                tags: p.tags,
-                provides: vec![],
-                depends_on: vec![],
-            })
+            .map(|p| p.to_dependencies())
             .collect())
     }
 
