@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use meta_cli::config::{self, ProjectInfo};
 use meta_cli::dependency_graph::{self, ProjectDependencies};
+use meta_cli::git_utils;
 use meta_cli::query::{Query, RepoState, WorkspaceState};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
@@ -1118,13 +1119,8 @@ impl McpServer {
             }
 
             // Get current branch
-            let branch_output = Command::new("git")
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                .current_dir(&project_path)
-                .output()?;
-            let current_branch = String::from_utf8_lossy(&branch_output.stdout)
-                .trim()
-                .to_string();
+            let current_branch = git_utils::current_branch(&project_path)
+                .unwrap_or_else(|| "HEAD".to_string());
 
             // Get tracking branch info
             let tracking_output = Command::new("git")
@@ -1946,22 +1942,19 @@ impl McpServer {
                 continue;
             }
 
-            let branch = self
-                .git_output(&project_path, &["rev-parse", "--abbrev-ref", "HEAD"])
-                .unwrap_or_else(|_| "unknown".to_string());
+            let branch = git_utils::current_branch(&project_path)
+                .unwrap_or_else(|| "unknown".to_string());
             let commit = self
                 .git_output(&project_path, &["rev-parse", "HEAD"])
                 .unwrap_or_else(|_| "unknown".to_string());
-            let status = self
-                .git_output(&project_path, &["status", "--porcelain"])
-                .unwrap_or_default();
+            let is_dirty = git_utils::is_dirty(&project_path).unwrap_or(false);
 
             project_snapshots.push(serde_json::json!({
                 "name": project.name,
                 "path": project.path,
                 "branch": branch,
                 "commit": commit,
-                "is_dirty": !status.is_empty()
+                "is_dirty": is_dirty
             }));
         }
 
@@ -2077,10 +2070,8 @@ impl McpServer {
             }
 
             // Check if dirty and not force
-            let status = self
-                .git_output(&full_path, &["status", "--porcelain"])
-                .unwrap_or_default();
-            if !status.is_empty() && !force {
+            let is_dirty = git_utils::is_dirty(&full_path).unwrap_or(false);
+            if is_dirty && !force {
                 failed.push(serde_json::json!({
                     "project": proj_name,
                     "error": "Has uncommitted changes (use force=true to override)"
@@ -2089,7 +2080,7 @@ impl McpServer {
             }
 
             // Stash if dirty and force
-            if !status.is_empty() && force {
+            if is_dirty && force {
                 let _ =
                     self.git_command(&full_path, &["stash", "push", "-m", "meta-restore-backup"]);
             }
