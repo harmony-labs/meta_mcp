@@ -752,7 +752,7 @@ impl McpServer {
             "meta_snapshot_list" => self.tool_snapshot_list(&arguments),
             "meta_snapshot_restore" => self.tool_snapshot_restore(&arguments),
             "meta_batch_execute" => self.tool_batch_execute(&arguments),
-            _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
+            _ => Err(anyhow::anyhow!("Unknown tool: {name}")),
         };
 
         match result {
@@ -840,7 +840,7 @@ impl McpServer {
                                 return Ok(serde_json::to_string_pretty(result)?);
                             }
                         }
-                        return Err(anyhow::anyhow!("Project '{}' not found", project));
+                        return Err(anyhow::anyhow!("Project '{project}' not found"));
                     }
                 }
             }
@@ -848,7 +848,7 @@ impl McpServer {
             Ok(stdout.to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow::anyhow!("meta git status failed: {}", stderr))
+            Err(anyhow::anyhow!("meta git status failed: {stderr}"))
         }
     }
 
@@ -885,7 +885,7 @@ impl McpServer {
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
-            Err(anyhow::anyhow!("Command failed:\n{}\n{}", stdout, stderr))
+            Err(anyhow::anyhow!("Command failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -936,7 +936,7 @@ impl McpServer {
             }
         }
 
-        Err(anyhow::anyhow!("Project '{}' not found", project_name))
+        Err(anyhow::anyhow!("Project '{project_name}' not found"))
     }
 
     // ========================================================================
@@ -976,7 +976,7 @@ impl McpServer {
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
-            Err(anyhow::anyhow!("git pull failed:\n{}\n{}", stdout, stderr))
+            Err(anyhow::anyhow!("git pull failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -1004,7 +1004,7 @@ impl McpServer {
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
-            Err(anyhow::anyhow!("git push failed:\n{}\n{}", stdout, stderr))
+            Err(anyhow::anyhow!("git push failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -1032,7 +1032,7 @@ impl McpServer {
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
-            Err(anyhow::anyhow!("git fetch failed:\n{}\n{}", stdout, stderr))
+            Err(anyhow::anyhow!("git fetch failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -1119,8 +1119,8 @@ impl McpServer {
             }
 
             // Get current branch
-            let current_branch = git_utils::current_branch(&project_path)
-                .unwrap_or_else(|| "HEAD".to_string());
+            let current_branch =
+                git_utils::current_branch(&project_path).unwrap_or_else(|| "HEAD".to_string());
 
             // Get tracking branch info
             let tracking_output = Command::new("git")
@@ -1194,7 +1194,7 @@ impl McpServer {
         if output.status.success() {
             Ok(format!("Staged files: {files}\n{stdout}"))
         } else {
-            Err(anyhow::anyhow!("git add failed:\n{}\n{}", stdout, stderr))
+            Err(anyhow::anyhow!("git add failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -1227,11 +1227,7 @@ impl McpServer {
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
-            Err(anyhow::anyhow!(
-                "git commit failed:\n{}\n{}",
-                stdout,
-                stderr
-            ))
+            Err(anyhow::anyhow!("git commit failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -1382,11 +1378,7 @@ impl McpServer {
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
-            Err(anyhow::anyhow!(
-                "git checkout failed:\n{}\n{}",
-                stdout,
-                stderr
-            ))
+            Err(anyhow::anyhow!("git checkout failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -1565,7 +1557,7 @@ impl McpServer {
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
-            Err(anyhow::anyhow!("build failed:\n{}\n{}", stdout, stderr))
+            Err(anyhow::anyhow!("build failed:\n{stdout}\n{stderr}"))
         }
     }
 
@@ -1812,9 +1804,7 @@ impl McpServer {
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             Err(anyhow::anyhow!(
-                "Failed to list plugins:\n{}\n{}",
-                stdout,
-                stderr
+                "Failed to list plugins:\n{stdout}\n{stderr}"
             ))
         }
     }
@@ -1908,9 +1898,7 @@ impl McpServer {
 
         let projects = self.load_project_dependencies(meta_dir)?;
         let graph = dependency_graph::DependencyGraph::build(projects)?;
-        let tags: Vec<String> = tag_filter
-            .map(|t| vec![t.to_string()])
-            .unwrap_or_default();
+        let tags: Vec<String> = tag_filter.map(|t| vec![t.to_string()]).unwrap_or_default();
         let order = graph.execution_order_filtered(&tags)?;
 
         Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -1942,8 +1930,8 @@ impl McpServer {
                 continue;
             }
 
-            let branch = git_utils::current_branch(&project_path)
-                .unwrap_or_else(|| "unknown".to_string());
+            let branch =
+                git_utils::current_branch(&project_path).unwrap_or_else(|| "unknown".to_string());
             let commit = self
                 .git_output(&project_path, &["rev-parse", "HEAD"])
                 .unwrap_or_else(|_| "unknown".to_string());
@@ -2034,7 +2022,7 @@ impl McpServer {
         let snapshot_path = snapshots_dir.join(&filename);
 
         if !snapshot_path.exists() {
-            return Err(anyhow::anyhow!("Snapshot '{}' not found", name));
+            return Err(anyhow::anyhow!("Snapshot '{name}' not found"));
         }
 
         let content = std::fs::read_to_string(&snapshot_path)?;
@@ -2267,10 +2255,7 @@ impl McpServer {
         meta_dir: &std::path::Path,
     ) -> Result<Vec<ProjectDependencies>> {
         let projects = self.load_projects(meta_dir)?;
-        Ok(projects
-            .into_iter()
-            .map(|p| p.to_dependencies())
-            .collect())
+        Ok(projects.into_iter().map(|p| p.to_dependencies()).collect())
     }
 
     // ========================================================================
@@ -2434,10 +2419,7 @@ mod tests {
 
         // Verify required fields in items
         let item_required = items.get("required").unwrap().as_array().unwrap();
-        let required_fields: Vec<&str> = item_required
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
+        let required_fields: Vec<&str> = item_required.iter().filter_map(|v| v.as_str()).collect();
         assert!(required_fields.contains(&"project"));
         assert!(required_fields.contains(&"message"));
     }
