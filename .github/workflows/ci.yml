@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          path: meta_mcp
+
+      - name: Clone dependencies
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/harmony-labs/meta_cli.git
+          git clone --depth 1 https://github.com/harmony-labs/meta_core.git
+          git clone --depth 1 https://github.com/harmony-labs/meta_plugin_protocol.git
+          git clone --depth 1 https://github.com/harmony-labs/loop_lib.git
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: meta_mcp
+
+      - name: Run tests
+        working-directory: meta_mcp
+        run: cargo test --all-features
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          path: meta_mcp
+
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 https://github.com/harmony-labs/meta_cli.git
+          git clone --depth 1 https://github.com/harmony-labs/meta_core.git
+          git clone --depth 1 https://github.com/harmony-labs/meta_plugin_protocol.git
+          git clone --depth 1 https://github.com/harmony-labs/loop_lib.git
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: meta_mcp
+
+      - name: Run clippy
+        working-directory: meta_mcp
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
