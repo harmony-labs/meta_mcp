@@ -1,6 +1,8 @@
 name: Auto Format
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -8,19 +10,23 @@ permissions:
   contents: write
 
 concurrency:
-  group: auto-format-${{ github.head_ref }}
+  group: auto-format-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   format:
     name: Auto Format
     runs-on: ubuntu-latest
-    # Only run on PRs from the same repo (not forks)
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Skip if:
+    # - PR from fork (can't push back)
+    # - Commit by github-actions[bot] (prevent infinite loop)
+    if: |
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.head_ref || github.ref_name }}
           # Use PAT to trigger downstream workflows; fallback to GITHUB_TOKEN
           token: ${{ secrets.PARENT_REPO_PAT || github.token }}
 
