@@ -11,6 +11,7 @@ name = "meta-mcp"
 path = "src/main.rs"
 
 [dependencies]
+meta_core = { path = "../meta_core" }
 meta_cli = { path = "../meta_cli", package = "meta" }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }

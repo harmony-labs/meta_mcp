@@ -4,7 +4,7 @@
 //! like Claude to interact with meta repositories.
 
 use anyhow::{Context, Result};
-use meta_cli::config::{self, ProjectInfo};
+use meta_core::config::{self, ProjectInfo};
 use meta_cli::dependency_graph::{self, ProjectDependencies};
 use meta_cli::git_utils;
 use meta_cli::query::{Query, RepoState, WorkspaceState};
@@ -2255,7 +2255,7 @@ impl McpServer {
         meta_dir: &std::path::Path,
     ) -> Result<Vec<ProjectDependencies>> {
         let projects = self.load_projects(meta_dir)?;
-        Ok(projects.into_iter().map(|p| p.to_dependencies()).collect())
+        Ok(projects.into_iter().map(|p| p.into()).collect())
     }
 
     // ========================================================================
