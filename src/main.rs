@@ -4,10 +4,10 @@
 //! like Claude to interact with meta repositories.
 
 use anyhow::{Context, Result};
-use meta_core::config::{self, ProjectInfo};
 use meta_cli::dependency_graph::{self, ProjectDependencies};
 use meta_cli::git_utils;
 use meta_cli::query::{Query, RepoState, WorkspaceState};
+use meta_core::config::{self, ProjectInfo};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
