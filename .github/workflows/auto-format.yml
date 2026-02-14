@@ -17,9 +17,6 @@ jobs:
   format:
     name: Auto Format
     runs-on: ubuntu-latest
-    # Skip if:
-    # - PR from fork (can't push back)
-    # - Commit by github-actions[bot] (prevent infinite loop)
     if: |
       (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.actor != 'github-actions[bot]'
@@ -27,18 +24,52 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref || github.ref_name }}
-          # Use PAT to trigger downstream workflows; fallback to GITHUB_TOKEN
+          path: meta_mcp
           token: ${{ secrets.PARENT_REPO_PAT || github.token }}
+
+      - name: Clone dependencies
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          for repo in meta_cli meta_core meta_plugin_protocol loop_lib; do
+            if git clone --depth 1 -b "$BRANCH" "https://github.com/harmony-labs/${repo}.git" 2>/dev/null; then
+              echo "Cloned ${repo}@${BRANCH}"
+            elif git clone --depth 1 "https://github.com/harmony-labs/${repo}.git"; then
+              echo "Branch ${BRANCH} not found for ${repo}; falling back to default branch"
+            else
+              echo "::error::Failed to clone ${repo}"
+              exit 1
+            fi
+          done
+
+      - name: Create workspace Cargo.toml
+        run: |
+          cat > Cargo.toml << 'EOF'
+          [workspace]
+          members = ["meta_mcp", "meta_cli", "meta_core", "meta_plugin_protocol", "loop_lib"]
+          resolver = "2"
+
+          [workspace.package]
+          version = "0.1.0"
+          edition = "2021"
+          license = "MIT"
+          repository = "https://github.com/harmony-labs/meta"
+          EOF
+
+      - name: Create VERSION file
+        run: echo "0.0.0-ci" > VERSION
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
       - name: Run cargo fmt
+        working-directory: meta_mcp
         run: cargo fmt --all
 
       - name: Check for changes
         id: changes
+        working-directory: meta_mcp
         run: |
           if git diff --quiet; then
             echo "formatted=false" >> $GITHUB_OUTPUT
@@ -48,6 +79,7 @@ jobs:
 
       - name: Commit and push
         if: steps.changes.outputs.formatted == 'true'
+        working-directory: meta_mcp
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

@@ -4,10 +4,10 @@
 //! like Claude to interact with meta repositories.
 
 use anyhow::{Context, Result};
-use meta_cli::config::{self, ProjectInfo};
 use meta_cli::dependency_graph::{self, ProjectDependencies};
 use meta_cli::git_utils;
 use meta_cli::query::{Query, RepoState, WorkspaceState};
+use meta_core::config::{self, ProjectInfo};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -2255,7 +2255,7 @@ impl McpServer {
         meta_dir: &std::path::Path,
     ) -> Result<Vec<ProjectDependencies>> {
         let projects = self.load_projects(meta_dir)?;
-        Ok(projects.into_iter().map(|p| p.to_dependencies()).collect())
+        Ok(projects.into_iter().map(|p| p.into()).collect())
     }
 
     // ========================================================================
@@ -2278,6 +2278,16 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Create a server with a known meta_dir for tests that need one.
+    fn server_with_meta_dir() -> (McpServer, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".meta"), "{}").unwrap();
+        let server = McpServer {
+            meta_dir: Some(tmp.path().to_path_buf()),
+        };
+        (server, tmp)
+    }
 
     #[test]
     fn test_server_creation() {
@@ -2426,7 +2436,7 @@ mod tests {
 
     #[test]
     fn test_multi_commit_missing_commits_arg() {
-        let server = McpServer::new();
+        let (server, _tmp) = server_with_meta_dir();
 
         // Test with empty args - should fail with missing commits
         let result = server.tool_git_multi_commit(&serde_json::json!({}));
@@ -2436,7 +2446,7 @@ mod tests {
 
     #[test]
     fn test_multi_commit_invalid_commits_format() {
-        let server = McpServer::new();
+        let (server, _tmp) = server_with_meta_dir();
 
         // Test with commits as string instead of array
         let result = server.tool_git_multi_commit(&serde_json::json!({
@@ -2448,7 +2458,7 @@ mod tests {
 
     #[test]
     fn test_multi_commit_missing_project_in_entry() {
-        let server = McpServer::new();
+        let (server, _tmp) = server_with_meta_dir();
 
         // Test with commit entry missing project
         let result = server.tool_git_multi_commit(&serde_json::json!({
@@ -2462,7 +2472,7 @@ mod tests {
 
     #[test]
     fn test_multi_commit_missing_message_in_entry() {
-        let server = McpServer::new();
+        let (server, _tmp) = server_with_meta_dir();
 
         // Test with commit entry missing message
         let result = server.tool_git_multi_commit(&serde_json::json!({
