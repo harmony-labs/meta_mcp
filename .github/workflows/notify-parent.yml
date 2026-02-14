@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for CI
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@v1.5.0
         with:
           ref: ${{ github.sha }}
           check-name: 'Test (ubuntu-latest)'
@@ -24,8 +24,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Determine source
         id: source
@@ -43,14 +41,15 @@ jobs:
             echo "message=$MSG" >> $GITHUB_OUTPUT
             echo "repo=${{ github.repository }}" >> $GITHUB_OUTPUT
             echo "repo_name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
+            echo "actor=${{ github.actor }}" >> $GITHUB_OUTPUT
             echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
             echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-            if [[ "$MSG" =~ ^feat ]]; then echo "type=feat" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^fix ]]; then echo "type=fix" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^chore ]]; then echo "type=chore" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^docs ]]; then echo "type=docs" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^test ]]; then echo "type=test" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^refactor ]]; then echo "type=refactor" >> $GITHUB_OUTPUT
+            if [[ "$MSG" =~ ^feat[:(] ]]; then echo "type=feat" >> $GITHUB_OUTPUT
+            elif [[ "$MSG" =~ ^fix[:(] ]]; then echo "type=fix" >> $GITHUB_OUTPUT
+            elif [[ "$MSG" =~ ^chore[:(] ]]; then echo "type=chore" >> $GITHUB_OUTPUT
+            elif [[ "$MSG" =~ ^docs[:(] ]]; then echo "type=docs" >> $GITHUB_OUTPUT
+            elif [[ "$MSG" =~ ^test[:(] ]]; then echo "type=test" >> $GITHUB_OUTPUT
+            elif [[ "$MSG" =~ ^refactor[:(] ]]; then echo "type=refactor" >> $GITHUB_OUTPUT
             else echo "type=other" >> $GITHUB_OUTPUT
             fi
           fi
@@ -61,13 +60,13 @@ jobs:
           token: ${{ secrets.PARENT_REPO_PAT }}
           repository: harmony-labs/meta
           event-type: child-repo-updated
-          client-payload: |
+          client-payload: >-
             {
-              "repo": "${{ steps.source.outputs.repo }}",
-              "repo_name": "${{ steps.source.outputs.repo_name }}",
-              "sha": "${{ steps.source.outputs.sha }}",
-              "short_sha": "${{ steps.source.outputs.short_sha }}",
-              "message": "${{ steps.source.outputs.message }}",
-              "type": "${{ steps.source.outputs.type }}",
-              "actor": "${{ steps.source.outputs.actor }}"
+              "repo": ${{ toJSON(steps.source.outputs.repo) }},
+              "repo_name": ${{ toJSON(steps.source.outputs.repo_name) }},
+              "sha": ${{ toJSON(steps.source.outputs.sha) }},
+              "short_sha": ${{ toJSON(steps.source.outputs.short_sha) }},
+              "message": ${{ toJSON(steps.source.outputs.message) }},
+              "type": ${{ toJSON(steps.source.outputs.type) }},
+              "actor": ${{ toJSON(steps.source.outputs.actor) }}
             }
