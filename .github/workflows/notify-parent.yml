@@ -27,30 +27,54 @@ jobs:
 
       - name: Determine source
         id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PAYLOAD_REPO: ${{ github.event.client_payload.repo }}
+          PAYLOAD_REPO_NAME: ${{ github.event.client_payload.repo_name }}
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha }}
+          PAYLOAD_SHORT_SHA: ${{ github.event.client_payload.short_sha }}
+          PAYLOAD_MESSAGE: ${{ github.event.client_payload.message }}
+          PAYLOAD_TYPE: ${{ github.event.client_payload.type }}
+          PAYLOAD_ACTOR: ${{ github.event.client_payload.actor }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_REPO_NAME: ${{ github.event.repository.name }}
+          GH_ACTOR: ${{ github.actor }}
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "repo=${{ github.event.client_payload.repo }}" >> $GITHUB_OUTPUT
-            echo "repo_name=${{ github.event.client_payload.repo_name }}" >> $GITHUB_OUTPUT
-            echo "sha=${{ github.event.client_payload.sha }}" >> $GITHUB_OUTPUT
-            echo "short_sha=${{ github.event.client_payload.short_sha }}" >> $GITHUB_OUTPUT
-            echo "message=${{ github.event.client_payload.message }}" >> $GITHUB_OUTPUT
-            echo "type=${{ github.event.client_payload.type }}" >> $GITHUB_OUTPUT
-            echo "actor=${{ github.event.client_payload.actor }}" >> $GITHUB_OUTPUT
+          write_output() {
+            local key="$1" value="$2"
+            local delim="__EOF__$(date +%s%N)_$RANDOM"
+            {
+              printf '%s<<%s\n' "$key" "$delim"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delim"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            write_output repo "$PAYLOAD_REPO"
+            write_output repo_name "$PAYLOAD_REPO_NAME"
+            write_output sha "$PAYLOAD_SHA"
+            write_output short_sha "$PAYLOAD_SHORT_SHA"
+            write_output message "$PAYLOAD_MESSAGE"
+            write_output type "$PAYLOAD_TYPE"
+            write_output actor "$PAYLOAD_ACTOR"
           else
             MSG=$(git log -1 --pretty=%s)
-            echo "message=$MSG" >> $GITHUB_OUTPUT
-            echo "repo=${{ github.repository }}" >> $GITHUB_OUTPUT
-            echo "repo_name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
-            echo "actor=${{ github.actor }}" >> $GITHUB_OUTPUT
-            echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-            echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-            if [[ "$MSG" =~ ^feat[:(] ]]; then echo "type=feat" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^fix[:(] ]]; then echo "type=fix" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^chore[:(] ]]; then echo "type=chore" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^docs[:(] ]]; then echo "type=docs" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^test[:(] ]]; then echo "type=test" >> $GITHUB_OUTPUT
-            elif [[ "$MSG" =~ ^refactor[:(] ]]; then echo "type=refactor" >> $GITHUB_OUTPUT
-            else echo "type=other" >> $GITHUB_OUTPUT
+            write_output message "$MSG"
+            write_output repo "$GH_REPOSITORY"
+            write_output repo_name "$GH_REPO_NAME"
+            write_output actor "$GH_ACTOR"
+            write_output sha "$(git rev-parse HEAD)"
+            write_output short_sha "$(git rev-parse --short HEAD)"
+            re_feat='^feat[:(]'; re_fix='^fix[:(]'; re_chore='^chore[:(]'
+            re_docs='^docs[:(]'; re_test='^test[:(]'; re_refactor='^refactor[:(]'
+            if [[ "$MSG" =~ $re_feat ]]; then write_output type "feat"
+            elif [[ "$MSG" =~ $re_fix ]]; then write_output type "fix"
+            elif [[ "$MSG" =~ $re_chore ]]; then write_output type "chore"
+            elif [[ "$MSG" =~ $re_docs ]]; then write_output type "docs"
+            elif [[ "$MSG" =~ $re_test ]]; then write_output type "test"
+            elif [[ "$MSG" =~ $re_refactor ]]; then write_output type "refactor"
+            else write_output type "other"
             fi
           fi
 
