@@ -1,0 +1,26 @@
+name: Notify Parent Repo
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify parent repo
+        # PARENT_REPO_PAT requires `repo` scope (or fine-grained `contents:write`)
+        # on harmony-labs/meta. Configure in Settings → Secrets → Actions.
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
+        with:
+          token: ${{ secrets.PARENT_REPO_PAT }}
+          repository: harmony-labs/meta
+          event-type: child-repo-updated
+          client-payload: >-
+            {
+              "repo_name": ${{ toJSON(github.event.repository.name) }},
+              "sha": ${{ toJSON(github.sha) }},
+              "actor": ${{ toJSON(github.actor) }}
+            }
