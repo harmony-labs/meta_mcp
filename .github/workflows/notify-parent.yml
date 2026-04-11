@@ -12,11 +12,11 @@ jobs:
     steps:
       - name: Notify parent repo
         # PARENT_REPO_PAT requires `repo` scope (or fine-grained `contents:write`)
-        # on harmony-labs/meta. Configure in Settings → Secrets → Actions.
+        # on gitkb/meta. Configure in Settings → Secrets → Actions.
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:
           token: ${{ secrets.PARENT_REPO_PAT }}
-          repository: harmony-labs/meta
+          repository: gitkb/meta
           event-type: child-repo-updated
           client-payload: >-
             {

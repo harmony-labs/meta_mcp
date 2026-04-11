@@ -32,9 +32,9 @@ jobs:
           BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           for repo in meta_cli meta_core meta_plugin_protocol loop_lib; do
-            if git clone --depth 1 -b "$BRANCH" "https://github.com/harmony-labs/${repo}.git" 2>/dev/null; then
+            if git clone --depth 1 -b "$BRANCH" "https://github.com/gitkb/${repo}.git" 2>/dev/null; then
               echo "Cloned ${repo}@${BRANCH}"
-            elif git clone --depth 1 "https://github.com/harmony-labs/${repo}.git"; then
+            elif git clone --depth 1 "https://github.com/gitkb/${repo}.git"; then
               echo "Branch ${BRANCH} not found for ${repo}; falling back to default branch"
             else
               echo "::error::Failed to clone ${repo}"
@@ -53,7 +53,7 @@ jobs:
           version = "0.1.0"
           edition = "2021"
           license = "MIT"
-          repository = "https://github.com/harmony-labs/meta"
+          repository = "https://github.com/gitkb/meta"
           EOF
 
       - name: Create VERSION file
